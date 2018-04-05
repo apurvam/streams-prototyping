@@ -14,7 +14,7 @@ import java.util.concurrent.CountDownLatch;
 
 public class StreamStreamJoin {
 
-  public static final Logger LOG = LoggerFactory.getLogger(StreamStreamJoin.class);
+  private static final Logger LOG = LoggerFactory.getLogger(StreamStreamJoin.class);
 
   public static void main(String args[]) {
     LOG.debug("starting");
@@ -48,7 +48,8 @@ public class StreamStreamJoin {
     });
 
     try {
-          streams.start();
+      streams.start();
+      latch.await();
     } catch (Exception e) {
       System.exit(1);
     }
