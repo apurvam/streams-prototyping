@@ -10,12 +10,18 @@ import org.apache.kafka.streams.kstream.KStream;
 import org.apache.kafka.streams.kstream.KTable;
 import org.apache.kafka.streams.kstream.Materialized;
 import org.apache.kafka.streams.kstream.Produced;
+import org.apache.kafka.streams.kstream.ValueTransformer;
+import org.apache.kafka.streams.kstream.ValueTransformerSupplier;
+import org.apache.kafka.streams.processor.ProcessorContext;
 import org.apache.kafka.streams.state.KeyValueStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Arrays;
+import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
+import java.util.stream.Collectors;
 
 
 public class Aggregations {
@@ -55,9 +61,15 @@ public class Aggregations {
                    Serdes.String().getClass().getName());
     properties.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG,
                    Serdes.String().getClass().getName());
+    properties.put(StreamsConfig.CACHE_MAX_BYTES_BUFFERING_CONFIG, 0);
 
-    // create table foo as select orderid, sum(order_total)/count(*) from orders group by 'constant
-    // key'
+    // The topology below executes the following ksql query, where we have a single field of
+    // interest, 'order_total', and we compute the average of the order total and double
+    // the order total.
+    //
+    // create table foo as select \
+    //   constant_key, avg(order_total * 2), avg(order_total) from orders  \
+    //   group by constant_key
 
     StreamsBuilder builder = new StreamsBuilder();
 
@@ -65,22 +77,62 @@ public class Aggregations {
                                                           Consumed.with(Serdes.ByteArray(),
                                                                         Serdes.String()));
 
-    KTable<String, Double> aggregateTable = inputStream
+    KTable<String, String> aggregateTable = inputStream
+        .mapValues((String value) -> {
+          // In this stage, we insert the double order total and drop all the other fields.
+          OrderData data = OrderData.fromDelimitedString(value);
+          StringBuilder stringBuilder = new StringBuilder();
+          stringBuilder.append(data.orderValue * 2);
+          stringBuilder.append(',');
+          stringBuilder.append(data.orderValue);
+          return stringBuilder.toString();
+        })
+        // here we reroute everything to a single topic by assigning a static key.
         .groupBy((key, value) -> "0")
+        // here we compute the two sums and a count.
         .aggregate(
-            () -> 0.0,
-            (String key, String value, Double currentValue) -> {
-              OrderData data = OrderData.fromDelimitedString(value);
-              return currentValue + data.orderValue;
+            () -> "",
+            (String key, String value, String currentValue) -> {
+              List<Double> values = Arrays.stream(value.split(","))
+                  .map(Double::parseDouble)
+                  .collect(Collectors.toList());
+
+              LOG.debug("values: {}", values.toString());
+              LOG.debug("current value: {}", currentValue);
+              List<Double> currentValues;
+              if (!currentValue.contains(",")) {
+                currentValues = Arrays.asList(0.0, 0.0, 0.0);
+              } else {
+                currentValues = Arrays.stream(currentValue.split(","))
+                    .map(Double::parseDouble)
+                    .collect(Collectors.toList());
+              }
+
+             LOG.debug("current values: {}", currentValues.toString());
+
+              Double first = currentValues.get(0) + values.get(0);
+              Double second = currentValues.get(1) + values.get(1);
+              int count = currentValues.get(2).intValue() + 1;
+
+              return String.valueOf(first)
+                     + "," + String.valueOf(second) + ","
+                     + String.valueOf(count);
             },
-            Materialized.<String, Double, KeyValueStore<Bytes, byte[]>>as("order-totals")
-                .withValueSerde(Serdes.Double())
-        );
+            Materialized.as("order-totals")
+        )
+        // now we do the division between the sums and the count to get the two averages.
+        .mapValues((String value) -> {
+          List<Double> values = Arrays.stream(value.split(","))
+              .map(Double::parseDouble)
+              .collect(Collectors.toList());
+          int count = values.get(2).intValue();
+          Double firstAvg = values.get(0) / count;
+          Double secondAvg = values.get(1) / count;
+          return firstAvg.toString() + "," + secondAvg.toString();
+        });
 
-    KStream<String, String> outputStream = aggregateTable.toStream()
-        .mapValues(value -> String.valueOf(value));
-    outputStream.to("order-totals");
-
+    KStream<String, String> outputStream = aggregateTable.toStream();
+    outputStream.to("order-averages");
 
     final KafkaStreams streams = new KafkaStreams(builder.build(), properties);
 
