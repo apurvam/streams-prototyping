@@ -10,10 +10,14 @@ import org.apache.kafka.streams.kstream.KStream;
 import org.apache.kafka.streams.kstream.KTable;
 import org.apache.kafka.streams.kstream.Materialized;
 import org.apache.kafka.streams.kstream.Produced;
+import org.apache.kafka.streams.kstream.Serialized;
+import org.apache.kafka.streams.kstream.TimeWindows;
 import org.apache.kafka.streams.kstream.ValueTransformer;
 import org.apache.kafka.streams.kstream.ValueTransformerSupplier;
+import org.apache.kafka.streams.kstream.Windowed;
 import org.apache.kafka.streams.processor.ProcessorContext;
 import org.apache.kafka.streams.state.KeyValueStore;
+import org.apache.kafka.streams.state.WindowStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,6 +25,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 
@@ -77,7 +82,7 @@ public class Aggregations {
                                                           Consumed.with(Serdes.ByteArray(),
                                                                         Serdes.String()));
 
-    KTable<String, String> aggregateTable = inputStream
+    KTable<Windowed<String>, String> aggregateTable = inputStream
         .mapValues((String value) -> {
           // In this stage, we insert the double order total and drop all the other fields.
           OrderData data = OrderData.fromDelimitedString(value);
@@ -89,6 +94,8 @@ public class Aggregations {
         })
         // here we reroute everything to a single topic by assigning a static key.
         .groupBy((key, value) -> "0")
+        // Bucket the orders into 30 second windows.
+        .windowedBy(TimeWindows.of(TimeUnit.SECONDS.toMillis(30)))
         // here we compute the two sums and a count.
         .aggregate(
             () -> "",
@@ -108,7 +115,7 @@ public class Aggregations {
                     .collect(Collectors.toList());
               }
 
-             LOG.debug("current values: {}", currentValues.toString());
+              LOG.debug("current values: {}", currentValues.toString());
 
               Double first = currentValues.get(0) + values.get(0);
               Double second = currentValues.get(1) + values.get(1);
@@ -131,7 +138,13 @@ public class Aggregations {
           return firstAvg.toString() + "," + secondAvg.toString();
         });
 
-    KStream<String, String> outputStream = aggregateTable.toStream();
+    KStream<String, String> outputStream = aggregateTable
+        .toStream((Windowed<String> key, String value) -> String.valueOf(key.window().start()) +
+                                                          "-" +
+                                                          String.valueOf(key.window().end()) +
+                                                          "-" +
+                                                          key.key()
+        );
     outputStream.to("order-averages");
 
     final KafkaStreams streams = new KafkaStreams(builder.build(), properties);
