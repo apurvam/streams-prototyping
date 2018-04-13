@@ -24,8 +24,6 @@ public class StreamStreamJoin {
 
   private static final Logger LOG = LoggerFactory.getLogger(StreamStreamJoin.class);
 
-
-
   /**
    * This models the following KSQL program:
    * CREATE STREAM impressions (impressiontime bigint, impressionid varchar, userid varchar, adid \
@@ -170,7 +168,7 @@ public class StreamStreamJoin {
 
   }
 
-    static class Click {
+  static class Click {
     long clickTime;
     String userId;
     String impressionId;
