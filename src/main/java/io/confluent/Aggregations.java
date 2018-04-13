@@ -138,13 +138,14 @@ public class Aggregations {
           return firstAvg.toString() + "," + secondAvg.toString();
         });
 
-    KStream<String, String> outputStream = aggregateTable
-        .toStream((Windowed<String> key, String value) -> String.valueOf(key.window().start()) +
-                                                          "-" +
-                                                          String.valueOf(key.window().end()) +
-                                                          "-" +
-                                                          key.key()
-        );
+    KStream<String, String> outputStream =
+        aggregateTable
+            .toStream((Windowed<String> key, String value) -> String.valueOf(key.window().start()) +
+                                                              "-" +
+                                                              String.valueOf(key.window().end()) +
+                                                              "-" +
+                                                              key.key()
+            );
     outputStream.to("order-averages");
 
     final KafkaStreams streams = new KafkaStreams(builder.build(), properties);
