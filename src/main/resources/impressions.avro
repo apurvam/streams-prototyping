@@ -3,7 +3,7 @@
         "name": "impressions",
         "type": "record",
         "fields": [
-                {"name": "impresssiontime", "type": {
+                {"name": "impressiontime", "type": {
                     "type": "long",
                     "format_as_time" : "unix_long",
                     "arg.properties": {
